@@ -4,7 +4,11 @@ import re
 import itertools
 from collections import Counter
 import numpy as np
+
 import Constants
+
+import os
+import sys
 
 parser = argparse.ArgumentParser(description='preprocess.py')
 
@@ -12,24 +16,22 @@ parser = argparse.ArgumentParser(description='preprocess.py')
 ## **Preprocess Options**
 ##
 
-parser.add_argument('-config',    help="Read options from this file")
+parser.add_argument('-config', help="Read options from this file")
 
-parser.add_argument('-dataset', type=str, default="",
-                    help="dataset available, [f8k|f30k|coco].")
-parser.add_argument('-image_train_file', type=str, default="/home/zeng/parlAI/data/f8k/f8k_train_ims.npy",
+parser.add_argument('-source_train_file', type=str, default="/home/zeng/data/OpenSubData/train.src",
                     help="Path to the training source data")
-parser.add_argument('-caption_train_file', type=str, default="/home/zeng/parlAI/data/f8k/f8k_train_caps.txt",
+parser.add_argument('-target_train_file', type=str, default="/home/zeng/data/OpenSubData/train.tgt",
                     help="Path to the training target data")
-parser.add_argument('-image_valid_file', type=str, default="/home/zeng/parlAI/data/f8k/f8k_dev_ims.npy",
+parser.add_argument('-source_valid_file', type=str, default="/home/zeng/data/OpenSubData/valid.src",
                     help="Path to the training source data")
-parser.add_argument('-caption_valid_file', type=str, default="/home/zeng/parlAI/data/f8k/f8k_dev_caps.txt",
+parser.add_argument('-target_valid_file', type=str, default="/home/zeng/data/OpenSubData/valid.tgt",
                     help="Path to the training target data")
-parser.add_argument('-image_test_file', type=str, default="/home/zeng/parlAI/data/f8k/f8k_test_ims.npy",
+parser.add_argument('-source_test_file', type=str, default="/home/zeng/data/OpenSubData/test.src",
                     help="Path to the training source data")
-parser.add_argument('-caption_test_file', type=str, default="/home/zeng/parlAI/data/f8k/f8k_test_caps.txt",
+parser.add_argument('-target_test_file', type=str, default="/home/zeng/data/OpenSubData/test.tgt",
                     help="Path to the training target data")
 
-parser.add_argument('-save_data', type=str, default="./",
+parser.add_argument('-save_data', type=str, default="/home/zeng/data/OpenSubData/5m",
                     help="Output file for the prepared data")
 
 parser.add_argument('-maximum_vocab_size', type=int, default=50000,
@@ -40,9 +42,9 @@ parser.add_argument('-vocab',
 
 parser.add_argument('-seq_length', type=int, default=50,
                     help="Maximum sequence length")
-parser.add_argument('-shuffle',    type=int, default=1,
+parser.add_argument('-shuffle', type=int, default=1,
                     help="Shuffle data")
-parser.add_argument('-seed',       type=int, default=3435,
+parser.add_argument('-seed', type=int, default=3435,
                     help="Random seed")
 
 parser.add_argument('-lower', action='store_true', help='lowercase data')
@@ -53,6 +55,7 @@ parser.add_argument('-report_every', type=int, default=1000,
 opt = parser.parse_args()
 
 torch.manual_seed(opt.seed)
+
 
 def clean_str(string):
     """
@@ -74,82 +77,137 @@ def clean_str(string):
     string = re.sub(r"\s{2,}", " ", string)
     return string.strip().lower()
 
+
 def build_vocab(sequence, maximum_vocab_size=50000):
     word_count = Counter(itertools.chain(*sequence)).most_common(maximum_vocab_size)
     word2count = dict([(word[0], word[1]) for word in word_count])
-    
-    word2index = dict([(word, index+4) for index, word in enumerate(word2count)])
-    word2index[0], word2index[1], word2index[2], word2index[3] = 0, 1, 2, 3
-    index2word = dict([(index+4, word) for index, word in enumerate(word2count)])
-    word2index[Constants.PAD_WORD], word2index[Constants.BOS_WORD], word2index[Constants.EOS_WORD], word2index[Constants.UNK_WORD] = \
-    Constants.PAD, Constants.BOS, Constants.EOS, Constants.UNK
+
+    word2index = dict([(word, index + 4) for index, word in enumerate(word2count) if word != "UNknown"])
+    word2index[Constants.PAD_WORD], word2index[Constants.BOS_WORD], word2index[Constants.EOS_WORD], word2index[
+        Constants.UNK_WORD] = \
+        Constants.PAD, Constants.BOS, Constants.EOS, Constants.UNK
+
+    index2word = dict([(index + 4, word) for index, word in enumerate(word2count) if word != "UNknown"])
+    index2word[Constants.PAD], index2word[Constants.BOS], index2word[Constants.EOS], index2word[
+        Constants.UNK] = Constants.PAD_WORD, \
+                         Constants.BOS_WORD, Constants.EOS_WORD, Constants.UNK_WORD
+
+    # word2index[Constants.PAD_WORD], word2index[Constants.BOS_WORD], word2index[Constants.EOS_WORD], word2index[Constants.UNK_WORD] = \
+    # Constants.PAD, Constants.BOS, Constants.EOS, Constants.UNK
 
     index2word[Constants.PAD], index2word[Constants.BOS], index2word[Constants.EOS], index2word[Constants.UNK] = \
-    Constants.PAD_WORD, Constants.BOS_WORD, Constants.EOS_WORD, Constants.UNK_WORD
+        Constants.PAD_WORD, Constants.BOS_WORD, Constants.EOS_WORD, Constants.UNK_WORD
     return word2count, word2index, index2word
 
-def makeData(images, captions, word2index, shuffle=opt.shuffle):
-    assert len(images) == len(captions)
-    images = torch.FloatTensor(images)
-    for idx in range(len(images)):
-        captions[idx] = torch.LongTensor([word2index[word] if word in word2index else Constants.PAD for word in captions[idx]])
+
+def makeData(sources, targets, word2index, shuffle=opt.shuffle):
+    assert len(sources) == len(targets)
+    sizes = []
+    for idx in range(len(sources)):
+        # Insert  `eosWord` at the end
+        src_words = [word2index[word] if word in word2index else Constants.UNK for word in sources[idx]] + [
+            Constants.EOS]
+        sources[idx] = torch.LongTensor(src_words)
+
+        sizes += [len(sources)]
+
+        tgt_words = [word2index[word] if word in word2index else Constants.UNK for word in targets[idx]] + [
+            Constants.EOS]
+        targets[idx] = torch.LongTensor(tgt_words)
 
     if shuffle == 1:
         print "... shuffling sentences"
-        perm = torch.randperm(len(images))
-        images = [images[idx] for idx in perm]
-        captions = [captions[idx] for idx in perm]
+        perm = torch.randperm(len(sources))
+        sources = [sources[idx] for idx in perm]
+        targets = [targets[idx] for idx in perm]
+        sizes = [sizes[idx] for idx in perm]
 
-    return images, captions
+    print "... sorting sentences"
+    _, perm = torch.sort(torch.Tensor(sizes))
+    sources = [sources[idx] for idx in perm]
+    targets = [targets[idx] for idx in perm]
+
+    return sources, targets
 
 
-def load_image_and_caption(image_file, caption_file):
+def load_source_and_target(source_file, target_file):
     """
-    Load captions and image features
-    Possible options: f8k, f30k, coco
+    Source_file
+    Target_file
     """
-    captions = []
-    # Image
-    images = np.load(image_file)
 
-    with open(caption_file, "rb") as f:
-        for line in f:
-            captions.append(line.strip().split())
+    src_lines = open(source_file, "r").readlines()
+    tgt_lines = open(target_file, "r").readlines()
 
-    return images, captions
+    sources = []
+    targets = []
+
+    for src, tgt in zip(src_lines, tgt_lines):
+        src = src.strip().split()
+        tgt = tgt.strip().split()
+
+        sources.append(src)
+        targets.append(tgt)
+
+    return sources, targets
 
 
 def main():
+    # # sources
+    # source_train_file = os.path.join(opt.source_train_file, opt.dataset, "_train_ims.npy")
+    # source_test_file = os.path.join(opt.source_test_file, opt.dataset, "_test_ims.npy")
+    # source_valid_file = os.path.join(opt.source_valid_file, opt.dataset, "_valid_ims.npy")
 
-    print "Loading data ..."
+    # # targets
+    # target_train_file = os.path.join(opt.target_train_file, opt.dataset, "_train_caps.txt")
+    # target_valid_file = os.path.join(opt.target_train_file, opt.dataset, "_valid_caps.txt")
+    # target_test_file = os.path.join(opt.target_test_file, opt.dataset, "_test_caps.txt")
 
-    image_train, caption_train = load_image_and_caption(opt.image_train_file, opt.caption_train_file)
-    image_valid, caption_valid = load_image_and_caption(opt.image_valid_file, opt.caption_valid_file)
-    image_test, caption_test = load_image_and_caption(opt.image_test_file, opt.caption_test_file)
 
 
-    word2count, word2index, index2word = build_vocab(caption_train + caption_valid + caption_test, opt.maximum_vocab_size)
+    source_train, target_train = load_source_and_target(opt.source_train_file, opt.target_train_file)
+    source_valid, target_valid = load_source_and_target(opt.source_valid_file, opt.target_valid_file)
+    source_test, target_test = load_source_and_target(opt.source_test_file, opt.target_test_file)
+
+    source_texts = source_train + source_valid + source_test
+    target_texts = target_train + target_valid + target_test
+
+    src_word2count, src_word2index, src_index2word = build_vocab(source_texts, opt.maximum_vocab_size)
+    tgt_word2count, tgt_word2index, tgt_index2word = build_vocab(target_texts, opt.maximum_vocab_size)
+
+    dicts = {}
+    word2index = {}
+    word2index["src"] = src_word2index
+    word2index["tgt"] = tgt_word2index
+    index2word = {}
+    index2word["src"] = src_index2word
+    index2word["tgt"] = tgt_index2word
+    dicts["word2index"] = word2index
+    dicts["index2word"] = index2word
+
+
 
     print('Preparing training ...')
     train = {}
-    train['image'], train['caption'] = makeData(image_train, caption_train, word2index)
+    train['src'], train['tgt'] = makeData(source_train, target_train, src_word2index, tgt_word2index)
 
     print('Preparing validation ...')
     valid = {}
-    valid['image'], valid['caption'] = makeData(image_valid, caption_valid, word2index)
+    valid['src'], valid['tgt'] = makeData(source_valid, target_valid, src_word2index, tgt_word2index)
 
     print('Preparing testing ...')
     valid = {}
-    valid['image'], valid['caption'] = makeData(image_test, caption_test, word2index)
+    valid['src'], valid['tgt'] = makeData(source_test, target_test, src_word2index, tgt_word2index)
 
-    print "saving data to \'" + opt.dataset + ".train.pt\'..."
+    print "saving data to \'" + opt.save_data + ".train.pt\'..."
     save_data = {
         "train": train,
         "valid": valid,
         "test": valid,
-        "word2index": word2index
+        "dicts": dicts
     }
-    torch.save(save_data, opt.dataset + ".train.pt")
+    torch.save(save_data, opt.save_data + ".train.pt")
+
 
 if __name__ == "__main__":
     main()
