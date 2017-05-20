@@ -14,5 +14,6 @@
 
 ### test files
 \# -files: it is a directory, and contains train.src, train.tgt, valid.src, valid.tgt, test.src, test.tgt
+
 \# -save_data: it save the .train.pt file. 
-python preprocess.py -files /home/zeng/conversation/OpenNMT-py/data/test/ -save_data /home/zeng/data/test/
+python preprocess.py -files /home/zeng/conversation/OpenNMT-py/data/test/ -save_data /home/zeng/data/test/test

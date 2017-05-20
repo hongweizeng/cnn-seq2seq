@@ -114,7 +114,7 @@ def makeData(sources, targets, word2index, shuffle=opt.shuffle):
 
         sizes += [len(sources)]
 
-        tgt_words = [word2index[word] if word in word2index else Constants.UNK for word in targets[idx]] + [
+        tgt_words = [Constants.BOS] + [word2index[word] if word in word2index else Constants.UNK for word in targets[idx]] + [
             Constants.EOS]
         targets[idx] = torch.LongTensor(tgt_words)
 

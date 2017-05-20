@@ -58,12 +58,16 @@ parser.add_argument("-hidden_size", type=int, default=512,
 parser.add_argument("-kernel_size", type=int, default=5,
                     help="")
 parser.add_argument("-enc_layers", type=int, default=2,
-                    help="Numbers of hidden layer")
+                    help="Numbers of encoder hidden layer")
+
+# Decoder
+parser.add_argument("-dec_layers", type=int, default=2,
+                    help="Numbers of decoder hidden layer")
 
 
 ## Optimization options
 
-parser.add_argument('-batch_size', type=int, default=128,
+parser.add_argument('-batch_size', type=int, default=64,
                     help='Maximum batch size')
 parser.add_argument('-max_generator_batches', type=int, default=32,
                     help="""Maximum batches of words in a sequence to run
@@ -76,7 +80,7 @@ parser.add_argument('-start_epoch', type=int, default=1,
 parser.add_argument('-param_init', type=float, default=0.1,
                     help="""Parameters are initialized over uniform distribution
                     with support (-param_init, param_init)""")
-parser.add_argument('-optim', default='sgd',
+parser.add_argument('-optim', default='adam',
                     help="Optimization method. [sgd|adagrad|adadelta|adam]")
 parser.add_argument('-max_grad_norm', type=float, default=5,
                     help="""If the norm of the gradient vector exceeds this,
@@ -92,7 +96,7 @@ parser.add_argument('-extra_shuffle', action="store_true",
                     shuffle and re-assign mini-batches""")
 
 #learning rate
-parser.add_argument('-learning_rate', type=float, default=1.0,
+parser.add_argument('-learning_rate', type=float, default=0.001,
                     help="""Starting learning rate. If adagrad/adadelta/adam is
                     used, then this is the global learning rate. Recommended
                     settings: sgd = 1, adagrad = 0.1, adadelta = 1, adam = 0.001""")
@@ -120,7 +124,7 @@ parser.add_argument('-pre_word_vecs_dec',
 parser.add_argument('-gpus', default=[], nargs='+', type=int,
                     help="Use CUDA on the listed devices.")
 
-parser.add_argument('-log_interval', type=int, default=50,
+parser.add_argument('-log_interval', type=int, default=1,
                     help="Print stats at this interval.")
 
 opt = parser.parse_args()
@@ -147,13 +151,26 @@ def memoryEfficientLoss(outputs, targets, generator, crit, eval=False):
     num_correct, loss = 0, 0
     outputs = Variable(outputs.data, requires_grad=(not eval), volatile=eval)
 
+    targets = targets[1:] # exclude the <s> from the begin
+
     batch_size = outputs.size(1)
-    outputs_split = torch.split(outputs, opt.max_generator_batches)
+    
+    # print "outputs", outputs
+    # print "targets", targets
+
+    outputs_split = torch.split(outputs.t().contiguous(), opt.max_generator_batches)
     targets_split = torch.split(targets, opt.max_generator_batches)
+
     for i, (out_t, targ_t) in enumerate(zip(outputs_split, targets_split)):
+        # print out_t.size(0), out_t.size(1)
         out_t = out_t.view(-1, out_t.size(2))
+        # print out_t.size(0), out_t.size(1)
         scores_t = generator(out_t)
-        loss_t = crit(scores_t, targ_t.view(-1))
+        # print scores_t.size(0), targ_t.size(0), targ_t.size(1)
+        targ_t = targ_t.view(-1)
+        # print targ_t.size(0)
+        # print targ_t
+        loss_t = crit(scores_t, targ_t)
         pred_t = scores_t.max(1)[1]
         num_correct_t = pred_t.data.eq(targ_t.data).masked_select(targ_t.ne(Constants.PAD).data).sum()
         num_correct += num_correct_t
@@ -162,6 +179,7 @@ def memoryEfficientLoss(outputs, targets, generator, crit, eval=False):
             loss_t.div(batch_size).backward()
 
     grad_output = None if outputs.grad is None else outputs.grad.data
+    # print "loss", loss
     return loss, grad_output, num_correct
 
 
@@ -172,9 +190,9 @@ def eval(model, criterion, data):
 
     model.eval()
     for i in range(len(data)):
-        batch = data[i][:-1] # exclude original indices
-        outputs = model(batch)
-        targets = batch[1][1:]  # exclude <s> from targets
+        batch = data[i]
+        targets = batch[1]
+        outputs = model(batch[0], targets)
         loss, _, num_correct = memoryEfficientLoss(
                 outputs, targets, model.generator, criterion, eval=True)
         total_loss += loss
@@ -207,9 +225,9 @@ def trainModel(model, trainData, validData, dataset, optim, criterion):
 
             batchIdx = batchOrder[i] if epoch > opt.curriculum else i
             batch = trainData[batchIdx]#[:-1] # exclude original indices
-            targets = batch[1][1:]  # exclude <s> from targets
-
             model.zero_grad()
+
+            targets = batch[1]
             outputs = model(batch[0], targets)
             loss, gradOutput, num_correct = memoryEfficientLoss(
                     outputs, targets, model.generator, criterion)
@@ -305,7 +323,7 @@ def main():
     decoder = Model.Decoder(opt, len(dicts["word2index"]['tgt']))
 
     generator = nn.Sequential(
-        nn.Linear(opt.hidden_size, len(dicts["word2index"]['tgt'])),
+        nn.Linear(opt.hidden_size * 2, len(dicts["word2index"]['tgt'])),
         nn.LogSoftmax())
 
     model = Model.NMTModel(encoder, decoder)
