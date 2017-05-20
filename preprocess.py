@@ -18,6 +18,9 @@ parser = argparse.ArgumentParser(description='preprocess.py')
 
 parser.add_argument('-config', help="Read options from this file")
 
+
+parser.add_argument('-files', type=str, default="/home/zeng/conversation/OpenNMT-py/data/test/",
+                    help="Path to the training source data")
 parser.add_argument('-source_train_file', type=str, default="/home/zeng/data/OpenSubData/train.src",
                     help="Path to the training source data")
 parser.add_argument('-target_train_file', type=str, default="/home/zeng/data/OpenSubData/train.tgt",
@@ -153,21 +156,22 @@ def load_source_and_target(source_file, target_file):
 
 
 def main():
-    # # sources
-    # source_train_file = os.path.join(opt.source_train_file, opt.dataset, "_train_ims.npy")
-    # source_test_file = os.path.join(opt.source_test_file, opt.dataset, "_test_ims.npy")
-    # source_valid_file = os.path.join(opt.source_valid_file, opt.dataset, "_valid_ims.npy")
 
-    # # targets
-    # target_train_file = os.path.join(opt.target_train_file, opt.dataset, "_train_caps.txt")
-    # target_valid_file = os.path.join(opt.target_train_file, opt.dataset, "_valid_caps.txt")
-    # target_test_file = os.path.join(opt.target_test_file, opt.dataset, "_test_caps.txt")
+    # train
+    source_train_file = os.path.join(opt.files, "train.src")
+    target_train_file = os.path.join(opt.files, "train.tgt")
 
+    # valid
+    source_valid_file = os.path.join(opt.files, "valid.src")
+    target_valid_file = os.path.join(opt.files, "valid.tgt")
 
+    # test
+    source_test_file = os.path.join(opt.files, "test.src")
+    target_test_file = os.path.join(opt.files, "test.tgt")
 
-    source_train, target_train = load_source_and_target(opt.source_train_file, opt.target_train_file)
-    source_valid, target_valid = load_source_and_target(opt.source_valid_file, opt.target_valid_file)
-    source_test, target_test = load_source_and_target(opt.source_test_file, opt.target_test_file)
+    source_train, target_train = load_source_and_target(source_train_file, target_train_file)
+    source_valid, target_valid = load_source_and_target(source_valid_file, target_valid_file)
+    source_test, target_test = load_source_and_target(source_test_file, target_test_file)
 
     source_texts = source_train + source_valid + source_test
     target_texts = target_train + target_valid + target_test

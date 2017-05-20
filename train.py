@@ -1,6 +1,5 @@
 from __future__ import division
 
-import onmt
 import argparse
 import torch
 import torch.nn as nn
@@ -11,6 +10,8 @@ import time
 
 import Model
 from dataset import Dataset
+from Optim import Optim
+import Constants
 
 parser = argparse.ArgumentParser(description='train.py')
 
@@ -33,9 +34,9 @@ parser.add_argument('-train_from', default='', type=str,
 
 parser.add_argument('-layers', type=int, default=2,
                     help='Number of layers in the LSTM encoder/decoder')
-parser.add_argument('-rnn_size', type=int, default=500,
+parser.add_argument('-rnn_size', type=int, default=512,
                     help='Size of LSTM hidden states')
-parser.add_argument('-word_vec_size', type=int, default=500,
+parser.add_argument('-embedding_size', type=int, default=512,
                     help='Word embedding sizes')
 parser.add_argument('-input_feed', type=int, default=1,
                     help="""Feed the context vector at each time step as
@@ -49,9 +50,20 @@ parser.add_argument('-brnn_merge', default='concat',
                     help="""Merge action for the bidirectional hidden states:
                     [concat|sum]""")
 
+
+# CNN parameters
+## Encoder or Decoder
+parser.add_argument("-hidden_size", type=int, default=512,
+                    help="CNN hidden size")
+parser.add_argument("-kernel_size", type=int, default=5,
+                    help="")
+parser.add_argument("-enc_layers", type=int, default=2,
+                    help="Numbers of hidden layer")
+
+
 ## Optimization options
 
-parser.add_argument('-batch_size', type=int, default=64,
+parser.add_argument('-batch_size', type=int, default=128,
                     help='Maximum batch size')
 parser.add_argument('-max_generator_batches', type=int, default=32,
                     help="""Maximum batches of words in a sequence to run
@@ -123,7 +135,7 @@ if opt.gpus:
 
 def NMTCriterion(vocabSize):
     weight = torch.ones(vocabSize)
-    weight[onmt.Constants.PAD] = 0
+    weight[Constants.PAD] = 0
     crit = nn.NLLLoss(weight, size_average=False)
     if opt.gpus:
         crit.cuda()
@@ -143,7 +155,7 @@ def memoryEfficientLoss(outputs, targets, generator, crit, eval=False):
         scores_t = generator(out_t)
         loss_t = crit(scores_t, targ_t.view(-1))
         pred_t = scores_t.max(1)[1]
-        num_correct_t = pred_t.data.eq(targ_t.data).masked_select(targ_t.ne(onmt.Constants.PAD).data).sum()
+        num_correct_t = pred_t.data.eq(targ_t.data).masked_select(targ_t.ne(Constants.PAD).data).sum()
         num_correct += num_correct_t
         loss += loss_t.data[0]
         if not eval:
@@ -167,7 +179,7 @@ def eval(model, criterion, data):
                 outputs, targets, model.generator, criterion, eval=True)
         total_loss += loss
         total_num_correct += num_correct
-        total_words += targets.data.ne(onmt.Constants.PAD).sum()
+        total_words += targets.data.ne(Constants.PAD).sum()
 
     model.train()
     return total_loss / total_words, total_num_correct / total_words
@@ -194,11 +206,11 @@ def trainModel(model, trainData, validData, dataset, optim, criterion):
         for i in range(len(trainData)):
 
             batchIdx = batchOrder[i] if epoch > opt.curriculum else i
-            batch = trainData[batchIdx][:-1] # exclude original indices
+            batch = trainData[batchIdx]#[:-1] # exclude original indices
+            targets = batch[1][1:]  # exclude <s> from targets
 
             model.zero_grad()
-            outputs = model(batch)
-            targets = batch[1][1:]  # exclude <s> from targets
+            outputs = model(batch[0], targets)
             loss, gradOutput, num_correct = memoryEfficientLoss(
                     outputs, targets, model.generator, criterion)
 
@@ -207,7 +219,7 @@ def trainModel(model, trainData, validData, dataset, optim, criterion):
             # update the parameters
             optim.step()
 
-            num_words = targets.data.ne(onmt.Constants.PAD).sum()
+            num_words = targets.data.ne(Constants.PAD).sum()
             report_loss += loss
             report_num_correct += num_correct
             report_tgt_words += num_words
@@ -293,7 +305,7 @@ def main():
     decoder = Model.Decoder(opt, len(dicts["word2index"]['tgt']))
 
     generator = nn.Sequential(
-        nn.Linear(opt.rnn_size, dicts['tgt'].size()),
+        nn.Linear(opt.hidden_size, len(dicts["word2index"]['tgt'])),
         nn.LogSoftmax())
 
     model = Model.NMTModel(encoder, decoder)
@@ -333,7 +345,7 @@ def main():
         encoder.load_pretrained_vectors(opt)
         decoder.load_pretrained_vectors(opt)
 
-        optim = onmt.Optim(
+        optim = Optim(
             opt.optim, opt.learning_rate, opt.max_grad_norm,
             lr_decay=opt.learning_rate_decay,
             start_decay_at=opt.start_decay_at
