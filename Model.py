@@ -35,7 +35,7 @@ class Encoder(nn.Module):
         self.bn2 = nn.BatchNorm1d(self.hidden_size * 2)
 
     def forward(self, input):
-        inputs = self.embedding(input)
+        inputs = self.embedding(input[0])
         _inputs = inputs.view(-1, inputs.size(2))
         outputs = self.affine(_inputs)
         outputs = outputs.view(inputs.size(0), inputs.size(1), -1).t()
