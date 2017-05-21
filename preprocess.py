@@ -103,18 +103,18 @@ def build_vocab(sequence, maximum_vocab_size=50000):
     return word2count, word2index, index2word
 
 
-def makeData(sources, targets, word2index, shuffle=opt.shuffle):
+def makeData(sources, targets, src_word2index, tgt_word2index, shuffle=opt.shuffle):
     assert len(sources) == len(targets)
     sizes = []
     for idx in range(len(sources)):
         # Insert  `eosWord` at the end
-        src_words = [word2index[word] if word in word2index else Constants.UNK for word in sources[idx]] + [
+        src_words = [src_word2index[word] if word in src_word2index else Constants.UNK for word in sources[idx]] + [
             Constants.EOS]
         sources[idx] = torch.LongTensor(src_words)
 
         sizes += [len(sources)]
 
-        tgt_words = [Constants.BOS] + [word2index[word] if word in word2index else Constants.UNK for word in targets[idx]] + [
+        tgt_words = [Constants.BOS] + [tgt_word2index[word] if word in tgt_word2index else Constants.UNK for word in targets[idx]] + [
             Constants.EOS]
         targets[idx] = torch.LongTensor(tgt_words)
 
